@@ -5,7 +5,7 @@ import { useApi, Kpi, Card, Loading, ErrorBox, Empty, Badge, Delta, Progress } f
 import { Donut, HBars, VBars, Trend, Legend, C } from '../components/charts.jsx';
 import { PeriodFilter, SiteSelect, KindSelect, defaultPeriod } from '../components/filters.jsx';
 import { qs } from '../api.js';
-import { eur, eur0, num, pct, delta, itDate, monthLabel, SEX, CHANNEL, PAYMENT, WEEKDAYS, MONTHS, itDateTime } from '../format.js';
+import { eur, eur0, num, pct, delta, itDate, monthLabel, SEX, CHANNEL, PAYMENT, WEEKDAYS, MONTHS, itDateTime, SEGMENT } from '../format.js';
 
 function KpiD({ label, value, prev, foot, accent, money = true, invert }) {
   return (
@@ -49,6 +49,12 @@ export default function Dashboard() {
           <KpiD label="Accettazioni" value={k.tickets} prev={pr.tickets} money={false} foot={`${num(k.items)} prestazioni`} />
           <KpiD label="Scontrino medio" value={avgTicket} prev={avgTicketPrev} />
           <KpiD label="Sconti e abbattimenti" value={k.discount} prev={pr.discount} invert foot={k.gross ? `${pct((k.discount / k.gross) * 100, 1)} del lordo` : ''} />
+        </div>
+        <div className="grid g4" style={{ marginTop: 16 }}>
+          <div onClick={() => nav('/budget?tab=days')} style={{ cursor: 'pointer' }}><Kpi label="Giorni lavorati" value={`${num(d.working_days.actual)}${d.working_days.planned ? ` / ${num(d.working_days.planned)}` : ''}`} foot={d.working_days.planned ? `reali su pianificati · ${d.working_days.planned - d.working_days.actual > 0 ? `${d.working_days.planned - d.working_days.actual} in meno` : 'in linea'}` : 'reali nel periodo (nessun calendario impostato)'} bar={d.working_days.planned ? (d.working_days.actual / d.working_days.planned) * 100 : null} /></div>
+          <Kpi label="Fatturato per giorno lavorato" value={eur0(d.working_days.revenue_per_day)} foot={`${num(d.working_days.tickets_per_day)} accettazioni al giorno`} />
+          <div onClick={() => nav('/budget')} style={{ cursor: 'pointer' }}><Kpi label={`Budget del periodo (${d.budget_period.scope})`} value={d.budget_period.amount ? eur0(d.budget_period.amount) : '–'} foot={d.budget_period.amount ? <span>consuntivo {eur0(d.budget_period.actual)} · <Delta value={((d.budget_period.actual - d.budget_period.amount) / d.budget_period.amount) * 100} /></span> : 'nessun budget caricato'} bar={d.budget_period.amount ? (d.budget_period.actual / d.budget_period.amount) * 100 : null} /></div>
+          <div onClick={() => nav('/budget?tab=variance')} style={{ cursor: 'pointer' }}><Kpi label="Scostamento dal budget" value={d.budget_period.amount ? `${d.budget_period.actual - d.budget_period.amount >= 0 ? '+' : ''}${eur0(d.budget_period.actual - d.budget_period.amount)}` : '–'} foot="apri l'analisi: ipotesi esterne e motivazioni interne" /></div>
         </div>
         <div className="grid g4" style={{ marginTop: 16 }}>
           <div onClick={() => nav('/clienti')} style={{ cursor: 'pointer' }}><KpiD label="Pazienti serviti" value={k.customers} prev={pr.customers} money={false} foot={`${num(k.b2b_customers)} clienti B2B`} /></div>
@@ -110,6 +116,37 @@ export default function Dashboard() {
             <VBars data={d.by_weekday.map((x) => ({ label: WEEKDAYS[x.label] || x.label, value: Number(x.tickets) }))} keys={[{ key: 'value', label: 'Accettazioni', color: C.blue }]} height={150} />
             <div className="subhead">Fascia oraria</div>
             <VBars data={d.by_hour.filter((x) => x.label != null).map((x) => ({ label: `${x.label}`, value: Number(x.tickets) }))} keys={[{ key: 'value', label: 'Accettazioni', color: C.teal }]} height={150} />
+          </Card>
+        </div>
+
+        <div style={{ marginTop: 16 }}>
+          <Card title="Il paziente tipo: i tre archetipi per volume di richiesta" actions={<span className="small muted">sesso, età, provenienza e cosa comprano · clicca per aprire l'elenco</span>}>
+            {d.archetypes.length ? <div className="grid g3">{d.archetypes.map((a, i) => (
+              <div key={i} className="card" style={{ padding: 16, cursor: 'pointer', borderTop: `4px solid ${[C.teal, C.blue, C.mauve][i]}` }} onClick={() => { const [lo, hi] = String(a.band).replace('+', '-120').split('-'); nav(`/clienti?sex=${a.sex === 'n.d.' ? '' : a.sex}&age_from=${lo || ''}&age_to=${hi || ''}&province=${a.province === 'n.d.' ? '' : a.province}`); }}>
+                <div className="row" style={{ justifyContent: 'space-between' }}><span className="small" style={{ letterSpacing: '.12em', textTransform: 'uppercase', fontWeight: 800, color: 'var(--teal)' }}>Archetipo {i + 1}</span><Badge tone="teal">{pct(a.share_tickets, 1)} delle accettazioni</Badge></div>
+                <div style={{ fontSize: 18, fontWeight: 780, color: 'var(--jet)', marginTop: 6 }}>{a.sex === 'F' ? 'Donna' : a.sex === 'M' ? 'Uomo' : 'Sesso n.d.'}, {a.band} anni{a.avg_age ? ` (media ${a.avg_age})` : ''}</div>
+                <div className="muted">{a.province !== 'n.d.' ? `provincia di ${a.province}` : 'provenienza n.d.'}{a.cities.length ? `: ${a.cities.map((c) => c.label).join(', ')}` : ''}</div>
+                <div className="row" style={{ marginTop: 10, gap: 14 }}><div><div className="small muted">Pazienti</div><div className="strong">{num(a.customers)}</div></div><div><div className="small muted">Accettazioni</div><div className="strong">{num(a.tickets)}</div></div><div><div className="small muted">Scontrino medio</div><div className="strong">{eur0(a.avg_ticket)}</div></div><div><div className="small muted">Spesa per paziente</div><div className="strong">{eur0(a.spend_per_customer)}</div></div></div>
+                <div className="subhead">Cosa compra</div>
+                <div className="row" style={{ gap: 4 }}>{a.products.map((p) => <span key={p.label} className="chip">{p.label}</span>)}</div>
+                <div className="small muted" style={{ marginTop: 8 }}>Linee: {a.lines.map((l) => l.label).join(', ') || '–'} · Prenota via {a.channels.map((c) => CHANNEL[c.label] || c.label).join(', ') || '–'}</div>
+              </div>))}</div> : <Empty>Servono vendite con pazienti profilati (sesso, data di nascita, provincia)</Empty>}
+          </Card>
+        </div>
+
+        <div className="grid g2" style={{ marginTop: 16 }}>
+          <Card title="Spesa media per profilo" flush actions={<span className="small muted">scontrino medio e spesa per paziente nel periodo</span>}>
+            <div className="table-wrap" style={{ maxHeight: 420 }}><table className="t"><thead><tr><th>Profilo</th><th className="num">Pazienti</th><th className="num">Scontrino medio</th><th className="num">Spesa per paziente</th><th className="num">Fatturato</th></tr></thead>
+              <tbody>
+                {[['Sesso', d.spend_by_sex.map((x) => ({ ...x, label: SEX[x.label] || x.label }))], ['Età', d.spend_by_age], ['Provincia', d.spend_by_province], ['Segmento', d.spend_by_segment.map((x) => ({ ...x, label: SEGMENT[x.label]?.label || x.label }))], ['Canale', d.spend_by_channel.map((x) => ({ ...x, label: CHANNEL[x.label] || x.label }))]].map(([g, rows]) => <React.Fragment key={g}>
+                  <tr><td colSpan={5} className="subhead" style={{ padding: '10px 14px 4px' }}>{g}</td></tr>
+                  {rows.map((x) => <tr key={g + x.label}><td>{x.label}</td><td className="num">{num(x.customers)}</td><td className="num strong">{eur0(x.avg_ticket)}</td><td className="num strong">{eur0(x.spend_per_customer)}</td><td className="num muted">{eur0(x.revenue)}</td></tr>)}
+                </React.Fragment>)}
+              </tbody></table></div>
+          </Card>
+          <Card title="Chi vende di più" flush actions={<span className="small muted">operatori di accettazione nel periodo</span>}>
+            {d.top_operators.length ? <div className="table-wrap" style={{ maxHeight: 420 }}><table className="t"><thead><tr><th>#</th><th>Operatore</th><th>Sede</th><th className="num">Accettazioni</th><th className="num">Fatturato</th><th className="num">Medio</th></tr></thead>
+              <tbody>{d.top_operators.map((o, i) => <tr key={o.label} className="click" onClick={() => nav(`/vendite?operator=${encodeURIComponent(o.label)}`)}><td><span className="n" style={{ display: 'inline-grid', placeItems: 'center', width: 22, height: 22, borderRadius: '50%', background: i < 3 ? 'var(--jet)' : 'var(--teal-050)', color: i < 3 ? 'var(--silk)' : 'var(--teal)', fontWeight: 800, fontSize: 11 }}>{i + 1}</span></td><td className="strong">{o.label}</td><td className="small muted" style={{ maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={o.site_name}>{o.site_name}{o.sites > 1 ? ` +${o.sites - 1}` : ''}</td><td className="num">{num(o.tickets)}</td><td className="num strong">{eur0(o.revenue)}</td><td className="num">{eur0(o.avg_ticket)}</td></tr>)}</tbody></table></div> : <Empty>Nessun operatore nelle vendite: mappa la colonna "Operatore" negli import dai gestionali</Empty>}
           </Card>
         </div>
 

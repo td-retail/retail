@@ -21,6 +21,8 @@ import promotionRoutes from './routes/promotions.js';
 import exposureRoutes from './routes/exposure.js';
 import connectorRoutes from './routes/connectors.js';
 import statsRoutes from './routes/stats.js';
+import budgetRoutes from './routes/budget.js';
+import structureRoutes from './routes/structure.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -85,6 +87,8 @@ app.use('/api/promotions', promotionRoutes);
 app.use('/api/exposure', exposureRoutes);
 app.use('/api/connectors', connectorRoutes);
 app.use('/api/stats', statsRoutes);
+app.use('/api', budgetRoutes);
+app.use('/api/structure', structureRoutes);
 app.use('/api', (_req, _res, next) => next(new HttpError(404, 'Endpoint inesistente')));
 
 // Frontend (build Vite)

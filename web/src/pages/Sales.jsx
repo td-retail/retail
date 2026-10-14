@@ -12,7 +12,7 @@ export default function Sales() {
   const toast = useToast();
   const [sp] = useSearchParams();
   const [p, setP] = useState(() => ({ preset: '30', from: new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10), to: new Date().toISOString().slice(0, 10) }));
-  const [f, setF] = useState({ q: '', site_id: '', kind: '', line_id: '', payment_kind: '', channel: '', source: '', campaign_id: sp.get('campaign_id') || '', promotion_id: sp.get('promotion_id') || '', offset: 0 });
+  const [f, setF] = useState({ q: '', site_id: '', kind: '', line_id: '', payment_kind: '', channel: '', source: '', campaign_id: sp.get('campaign_id') || '', promotion_id: sp.get('promotion_id') || '', operator: sp.get('operator') || '', offset: 0 });
   const [add, setAdd] = useState(null);
   const list = useApi(`/sales${qs({ ...f, from: p.from, to: p.to, limit: 100 })}`);
   const d = list.data;
@@ -34,6 +34,7 @@ export default function Sales() {
         <LineSelect value={f.line_id} onChange={(v) => set('line_id', v)} />
         <Field label="Regime"><select value={f.payment_kind} onChange={(e) => set('payment_kind', e.target.value)}><option value="">Tutti</option>{Object.entries(PAYMENT).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></Field>
         <Field label="Canale"><select value={f.channel} onChange={(e) => set('channel', e.target.value)}><option value="">Tutti</option>{Object.entries(CHANNEL).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></Field>
+        <Field label="Operatore"><input value={f.operator} placeholder="Chi ha venduto" onChange={(e) => set('operator', e.target.value)} /></Field>
         <Field label="Origine"><select value={f.source} onChange={(e) => set('source', e.target.value)}><option value="">Tutte</option>{Object.entries(SOURCE).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></Field>
       </PeriodFilter>
       {d && <div className="grid g4" style={{ marginBottom: 16 }}>
@@ -46,7 +47,7 @@ export default function Sales() {
       <Card flush>
         {!d ? <Loading /> : !d.rows.length ? <Empty>Nessuna vendita nel periodo</Empty> : (
           <div className="table-wrap"><table className="t">
-            <thead><tr><th>Data</th><th>Accettazione</th><th>Cliente</th><th>Sede</th><th>Prestazione</th><th className="num">Q.tà</th><th className="num">Lordo</th><th className="num">Sconto</th><th className="num">Netto</th><th>Regime · canale</th>{canWrite(user) && <th />}</tr></thead>
+            <thead><tr><th>Data</th><th>Accettazione</th><th>Cliente</th><th>Sede</th><th>Prestazione</th><th className="num">Q.tà</th><th className="num">Lordo</th><th className="num">Sconto</th><th className="num">Netto</th><th>Regime · canale</th><th>Operatore</th>{canWrite(user) && <th />}</tr></thead>
             <tbody>{d.rows.map((r) => (
               <tr key={r.id}>
                 <td>{itDate(r.sale_date)}{r.sale_time ? <div className="small muted">{String(r.sale_time).slice(0, 5)}</div> : null}</td>
@@ -56,6 +57,7 @@ export default function Sales() {
                 <td>{r.product_description || r.product_code}<div className="small muted">{r.product_code}{r.line_name ? ` · ${r.line_name}` : ''}{r.promotion_name ? <span className="chip">{r.promotion_name}</span> : null}{r.campaign_name ? <span className="chip">{r.campaign_name}</span> : null}</div></td>
                 <td className="num">{num(r.quantity)}</td><td className="num">{eur(r.gross_amount)}</td><td className="num">{Number(r.discount) ? eur(r.discount) : '–'}</td><td className="num strong">{eur(r.net_amount)}</td>
                 <td className="small">{PAYMENT[r.payment_kind] || r.payment_kind || '–'}<div className="muted">{CHANNEL[r.booking_channel] || r.booking_channel || ''}</div></td>
+                <td className="small">{r.operator || '–'}</td>
                 {canWrite(user) && <td className="num">{r.source === 'MANUALE' && <button className="iconbtn" title="Elimina l'accettazione" onClick={async () => { if (!window.confirm(`Eliminare l'accettazione ${r.external_ref}?`)) return; try { await api.del(`/sales/ref/${r.source}/${r.external_ref}`); toast('Accettazione eliminata'); list.reload(); } catch (e) { toast(e.message, 'err'); } }}><Icon name="trash" /></button>}</td>}
               </tr>))}</tbody>
           </table></div>
@@ -78,7 +80,7 @@ function ManualSale({ value: v, onChange, onClose, onSaved }) {
   const tot = v.lines.reduce((a, l) => a + (Number(l.gross_amount) || 0) * (Number(l.quantity) || 1) - (Number(l.discount) || 0), 0);
   const save = async () => {
     try {
-      await api.post('/sales', { sale_date: v.sale_date, sale_time: v.sale_time || null, site_id: Number(v.site_id), customer_id: v.customer?.kind === 'B2C' ? v.customer.id : null, b2b_customer_id: v.customer?.kind === 'B2B' ? v.customer.id : null, payment_kind: v.payment_kind || null, booking_channel: v.booking_channel || null, promo_code: v.promo_code || null, external_ref: v.external_ref || null,
+      await api.post('/sales', { sale_date: v.sale_date, sale_time: v.sale_time || null, site_id: Number(v.site_id), customer_id: v.customer?.kind === 'B2C' ? v.customer.id : null, b2b_customer_id: v.customer?.kind === 'B2B' ? v.customer.id : null, payment_kind: v.payment_kind || null, booking_channel: v.booking_channel || null, promo_code: v.promo_code || null, external_ref: v.external_ref || null, operator: v.operator || null,
         lines: v.lines.filter((l) => l.product_id).map((l) => ({ product_id: Number(l.product_id), quantity: Number(l.quantity) || 1, gross_amount: Number(l.gross_amount) * (Number(l.quantity) || 1), discount: Number(l.discount) || 0 })) });
       toast('Accettazione registrata'); onSaved();
     } catch (e) { toast(e.message, 'err'); }
@@ -94,6 +96,7 @@ function ManualSale({ value: v, onChange, onClose, onSaved }) {
         <Field label="Regime"><select value={v.payment_kind || ''} onChange={(e) => s('payment_kind', e.target.value)}><option value="">–</option>{Object.entries(PAYMENT).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></Field>
         <Field label="Canale"><select value={v.booking_channel || ''} onChange={(e) => s('booking_channel', e.target.value)}><option value="">–</option>{Object.entries(CHANNEL).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></Field>
         <Field label="Codice promo"><input value={v.promo_code || ''} onChange={(e) => s('promo_code', e.target.value.toUpperCase())} /></Field>
+        <Field label="Operatore" help="Vuoto = tu"><input value={v.operator || ''} onChange={(e) => s('operator', e.target.value)} /></Field>
       </div>
       <div className="subhead">Prestazioni</div>
       <table className="t"><thead><tr><th>Prestazione</th><th className="num">Q.tà</th><th className="num">Prezzo unitario</th><th className="num">Sconto riga</th><th /></tr></thead>

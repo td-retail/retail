@@ -19,6 +19,8 @@ import PromotionDetail from './pages/PromotionDetail.jsx';
 import Exposure from './pages/Exposure.jsx';
 import ExposureSite from './pages/ExposureSite.jsx';
 import Sites from './pages/Sites.jsx';
+import SiteDetail from './pages/SiteDetail.jsx';
+import Budget from './pages/Budget.jsx';
 import Connectors from './pages/Connectors.jsx';
 import Users from './pages/Users.jsx';
 import Settings from './pages/Settings.jsx';
@@ -51,7 +53,8 @@ function Shell() {
           <L to="/prodotti" icon="package">Prestazioni e prodotti</L>
           <L to="/vendite" icon="cash">Accettazioni e vendite</L>
           {writer && <L to="/import" icon="upload">Import dai gestionali</L>}
-          <div className="group">Marketing</div>
+          <div className="group">Controllo e marketing</div>
+          <L to="/budget" icon="chart">Budget e scostamenti</L>
           <L to="/campagne" icon="megaphone">Campagne</L>
           <L to="/promozioni" icon="tag">Calendario promozionale</L>
           <div className="group">Retail in sede</div>
@@ -92,6 +95,8 @@ function Shell() {
           <Route path="/esposizione" element={<Exposure />} />
           <Route path="/esposizione/:id" element={<ExposureSite />} />
           <Route path="/sedi" element={<Sites />} />
+          <Route path="/sedi/:id" element={<SiteDetail />} />
+          <Route path="/budget" element={<Budget />} />
           {admin && <Route path="/connettori" element={<Connectors />} />}
           {admin && <Route path="/utenti" element={<Users />} />}
           {admin && <Route path="/impostazioni" element={<Settings />} />}

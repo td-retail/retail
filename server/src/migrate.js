@@ -6,6 +6,7 @@ import { pool, one, q } from './db.js';
 import { config } from './config.js';
 import { DEFAULT_SETTINGS, PRODUCT_LINES, SITES, EXPOSURE_ZONES, EXPOSURE_STANDARDS, CONNECTORS } from './lib/seedData.js';
 import { loadDemo } from './lib/demo.js';
+import { MARKET_SEED, MARKET_BENCH } from './lib/marketSeed.js';
 
 const dir = path.join(path.dirname(fileURLToPath(import.meta.url)), 'migrations');
 
@@ -59,6 +60,13 @@ async function seed() {
   for (const c of CONNECTORS) {
     await q('INSERT INTO connectors(kind, base_url, auth_kind, settings) VALUES ($1,$2,$3,$4) ON CONFLICT (kind) DO NOTHING', [c.kind, c.base_url, c.auth_kind, JSON.stringify(c.settings)]);
   }
+  // Dati di mercato MEF a.i. 2024 per i comuni del network (solo se assenti)
+  for (const [comune, prov, contr, rc, ri, lo, mid, hi] of MARKET_SEED) {
+    for (const [metric, value] of [['contribuenti', contr], ['reddito_medio', rc], ['reddito_imponibile_medio', ri], ['quota_redditi_bassi', lo], ['quota_redditi_medi', mid], ['quota_redditi_alti', hi]]) {
+      await q("INSERT INTO market_data(year, territory_kind, territory, province, metric, value, source) VALUES (2024,'COMUNE',$1,$2,$3,$4,'MEF, Redditi IRPEF su base comunale a.i. 2024') ON CONFLICT DO NOTHING", [comune, prov, metric, value]);
+    }
+  }
+  for (const [kind, terr, metric, value, src] of MARKET_BENCH) await q('INSERT INTO market_data(year, territory_kind, territory, metric, value, source) VALUES (2024,$1,$2,$3,$4,$5) ON CONFLICT DO NOTHING', [kind, terr, metric, value, src]);
   // Primo amministratore
   if (config.seed.adminEmail) {
     const ex = await one('SELECT id FROM users WHERE lower(email)=lower($1)', [config.seed.adminEmail]);

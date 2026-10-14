@@ -37,6 +37,7 @@ export const DATASETS = {
       ['booking_channel', 'Canale di prenotazione', false, ['canale', 'channel', 'origine', 'provenienza', 'source', 'prenotato_da', 'modalita_prenotazione']],
       ['referrer', 'Medico prescrittore', false, ['medico', 'prescrittore', 'mmg', 'referrer', 'inviante', 'medico_curante']],
       ['promo_code', 'Codice promozione', false, ['promo', 'codice_promo', 'promozione', 'coupon', 'voucher', 'campagna']],
+      ['operator', 'Operatore di accettazione (chi vende)', false, ['operatore', 'utente', 'accettato_da', 'cassiere', 'user', 'username', 'addetto', 'inserito_da', 'sportellista']],
     ],
   },
   CUSTOMERS: {
@@ -284,10 +285,10 @@ export async function runImport({ source, dataset, buffer, filename, mapping, us
         if (disc == null) disc = gross != null && net != null ? Math.round((gross - net) * 100) / 100 : 0;
         const promo = S(g(row, 'promo_code'))?.toUpperCase() || null;
         if (!dryRun) {
-          await c.query(`INSERT INTO sales(source, external_ref, line_no, sale_date, sale_time, customer_id, b2b_customer_id, site_id, product_id, product_code, product_desc, quantity, gross_amount, discount, net_amount, payment_kind, booking_channel, referrer, promo_code, campaign_id, promotion_id, import_batch_id)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
-            ON CONFLICT (source, external_ref, line_no) WHERE external_ref IS NOT NULL AND external_ref <> '' DO UPDATE SET sale_date=EXCLUDED.sale_date, customer_id=coalesce(EXCLUDED.customer_id, sales.customer_id), b2b_customer_id=coalesce(EXCLUDED.b2b_customer_id, sales.b2b_customer_id), site_id=coalesce(EXCLUDED.site_id, sales.site_id), product_id=coalesce(EXCLUDED.product_id, sales.product_id), quantity=EXCLUDED.quantity, gross_amount=EXCLUDED.gross_amount, discount=EXCLUDED.discount, net_amount=EXCLUDED.net_amount, payment_kind=coalesce(EXCLUDED.payment_kind, sales.payment_kind), booking_channel=coalesce(EXCLUDED.booking_channel, sales.booking_channel), import_batch_id=EXCLUDED.import_batch_id`,
-            [source, extRef, lineNo, date, toTime(g(row, 'sale_time')), customerId, b2bId, siteRow?.id || null, productId, code, desc, qty, gross ?? 0, disc ?? 0, net ?? 0, b2bId && !customerId ? 'AZIENDA' : normPay(g(row, 'payment_kind')), normChannel(g(row, 'booking_channel')), S(g(row, 'referrer')), promo, promo ? campaignsByCode[promo] || null : null, promo ? promosByCode[promo] || null : null, batchId]);
+          await c.query(`INSERT INTO sales(source, external_ref, line_no, sale_date, sale_time, customer_id, b2b_customer_id, site_id, product_id, product_code, product_desc, quantity, gross_amount, discount, net_amount, payment_kind, booking_channel, referrer, promo_code, campaign_id, promotion_id, import_batch_id, operator)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
+            ON CONFLICT (source, external_ref, line_no) WHERE external_ref IS NOT NULL AND external_ref <> '' DO UPDATE SET sale_date=EXCLUDED.sale_date, customer_id=coalesce(EXCLUDED.customer_id, sales.customer_id), b2b_customer_id=coalesce(EXCLUDED.b2b_customer_id, sales.b2b_customer_id), site_id=coalesce(EXCLUDED.site_id, sales.site_id), product_id=coalesce(EXCLUDED.product_id, sales.product_id), quantity=EXCLUDED.quantity, gross_amount=EXCLUDED.gross_amount, discount=EXCLUDED.discount, net_amount=EXCLUDED.net_amount, payment_kind=coalesce(EXCLUDED.payment_kind, sales.payment_kind), booking_channel=coalesce(EXCLUDED.booking_channel, sales.booking_channel), import_batch_id=EXCLUDED.import_batch_id, operator=coalesce(EXCLUDED.operator, sales.operator)`,
+            [source, extRef, lineNo, date, toTime(g(row, 'sale_time')), customerId, b2bId, siteRow?.id || null, productId, code, desc, qty, gross ?? 0, disc ?? 0, net ?? 0, b2bId && !customerId ? 'AZIENDA' : normPay(g(row, 'payment_kind')), normChannel(g(row, 'booking_channel')), S(g(row, 'referrer')), promo, promo ? campaignsByCode[promo] || null : null, promo ? promosByCode[promo] || null : null, batchId, S(g(row, 'operator'))]);
         }
         ok++;
       } catch (e) {

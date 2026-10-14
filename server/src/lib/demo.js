@@ -2,6 +2,7 @@
 // Generato in modo deterministico (seed fisso): utile per vedere la dashboard prima degli import reali.
 import { q, one, many, tx } from '../db.js';
 import { refreshCustomerStats } from './customers.js';
+import { holidays } from './calendar.js';
 
 // PRNG deterministico (mulberry32)
 function rng(seed) { let a = seed >>> 0; return () => { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
@@ -141,6 +142,7 @@ const B2B = [
   ['Vetreria Empolese', 'Manifatturiero', 'AZIENDA', 'Empoli', 'FI', 75],
 ];
 
+const OPERATORS = ['Giulia M.', 'Sara P.', 'Elena R.', 'Francesca B.', 'Martina C.', 'Chiara L.', 'Alessia F.', 'Laura G.', 'Valentina N.', 'Silvia T.', 'Irene V.', 'Monica D.', 'Paola S.', 'Serena A.', 'Marta Z.'];
 const CHANNELS_B2C = [['SPORTELLO', 34], ['TELEFONO', 22], ['TUOTEMPO', 24], ['WEB', 8], ['MMG', 7], ['APP', 5]];
 const PAY_B2C = [['PRIVATO', 70], ['SSN', 14], ['ASSICURAZIONE', 9], ['FONDO', 5], ['CONVENZIONE', 2]];
 
@@ -155,6 +157,9 @@ export async function loadDemo() {
   const lines = Object.fromEntries((await many('SELECT id, code FROM product_lines')).map((x) => [x.code, x.id]));
   const sites = await many("SELECT id, code, kind FROM sites WHERE kind <> 'HEADQUARTER'");
   const siteByCode = Object.fromEntries(sites.map((s) => [s.code, s]));
+  // operatori di accettazione per sede (2-3 a testa)
+  const opsBySite = {}; let oi = 0; const usedOps = new Set(); for (const s of sites) { const n = s.kind === 'PUNTO_PRELIEVI' ? 2 : 3; opsBySite[s.id] = []; for (let k = 0; k < n; k++) { let nm; do { nm = `${OPERATORS[oi % OPERATORS.length].split(' ')[0]} ${LAST[(oi * 7 + k * 3) % LAST.length].slice(0, 2)}.`; oi++; } while (usedOps.has(nm)); usedOps.add(nm); opsBySite[s.id].push(nm); } }
+  const opPick = (siteId) => { const l = opsBySite[siteId]; return l[Math.floor(Math.pow(r(), 1.5) * l.length)]; };
 
   // Prestazioni
   const prodIds = {};
@@ -254,7 +259,7 @@ export async function loadDemo() {
   const batch = [];
   const flush = async () => {
     if (!batch.length) return;
-    const cols = ['source', 'external_ref', 'line_no', 'sale_date', 'sale_time', 'customer_id', 'b2b_customer_id', 'site_id', 'product_id', 'product_code', 'quantity', 'gross_amount', 'discount', 'net_amount', 'payment_kind', 'booking_channel', 'promo_code', 'campaign_id', 'promotion_id'];
+    const cols = ['source', 'external_ref', 'line_no', 'sale_date', 'sale_time', 'customer_id', 'b2b_customer_id', 'site_id', 'product_id', 'product_code', 'quantity', 'gross_amount', 'discount', 'net_amount', 'payment_kind', 'booking_channel', 'promo_code', 'campaign_id', 'promotion_id', 'operator'];
     const vals = []; const ph = [];
     batch.forEach((row, i) => { ph.push(`(${cols.map((_, j) => `$${i * cols.length + j + 1}`).join(',')})`); vals.push(...cols.map((c) => row[c] ?? null)); });
     await q(`INSERT INTO sales(${cols.join(',')}) VALUES ${ph.join(',')} ON CONFLICT DO NOTHING`, vals);
@@ -263,6 +268,7 @@ export async function loadDemo() {
   for (let d = 0; d <= days; d++) {
     const date = new Date(start.getTime() + d * 86400000);
     const dow = date.getUTCDay(); if (dow === 0) continue;
+    if (holidays(date.getUTCFullYear()).has(iso(date))) continue;
     const m = date.getUTCMonth() + 1;
     const season = [1.05, 1.0, 1.1, 0.95, 1.0, 0.95, 0.8, 0.6, 1.05, 1.2, 1.05, 0.85][m - 1];
     const growth = 1 + d / days * 0.35; // crescita del network nel periodo
@@ -273,7 +279,7 @@ export async function loadDemo() {
       const site = r() < 0.8 ? c.home : pick(r, sites);
       const t = `${String(7 + Math.floor(r() * 11)).padStart(2, '0')}:${String(Math.floor(r() * 60)).padStart(2, '0')}`;
       const extRef = `A${ref++}`;
-      const channel = weighted(r, CHANNELS_B2C); const pay = weighted(r, PAY_B2C);
+      const channel = weighted(r, CHANNELS_B2C); const pay = weighted(r, PAY_B2C); const operator = opPick(site.id);
       const items = [];
       const kind = site.kind;
       const x = r();
@@ -290,7 +296,7 @@ export async function loadDemo() {
         if (promoHit) disc = promo[6] === 'PERCENTUALE' ? Math.round(gross * promo[7]) / 100 : promo[6] === 'PREZZO_FISSO' ? Math.max(0, gross - promo[7]) : 0;
         else if (pay === 'SSN') disc = Math.round(gross * 0.35 * 100) / 100;
         else if (pay === 'ASSICURAZIONE' || pay === 'FONDO') disc = Math.round(gross * 0.12 * 100) / 100;
-        batch.push({ source: 'DEMO', external_ref: extRef, line_no: i + 1, sale_date: iso(date), sale_time: t, customer_id: c.id, site_id: site.id, product_id: p.id, product_code: p.code, quantity: 1, gross_amount: gross, discount: disc, net_amount: Math.round((gross - disc) * 100) / 100, payment_kind: pay, booking_channel: channel, promo_code: promoHit ? `PROMO${String(m).padStart(2, '0')}` : campaign?.promo_code || null, campaign_id: campaign?.id || null, promotion_id: promoHit });
+        batch.push({ source: 'DEMO', external_ref: extRef, line_no: i + 1, sale_date: iso(date), sale_time: t, customer_id: c.id, site_id: site.id, product_id: p.id, product_code: p.code, quantity: 1, gross_amount: gross, discount: disc, net_amount: Math.round((gross - disc) * 100) / 100, payment_kind: pay, booking_channel: channel, promo_code: promoHit ? `PROMO${String(m).padStart(2, '0')}` : campaign?.promo_code || null, campaign_id: campaign?.id || null, promotion_id: promoHit, operator });
         n++;
       });
       if (batch.length >= 400) await flush();
@@ -308,7 +314,7 @@ export async function loadDemo() {
         for (let i = 0; i < nI; i++) {
           const p = pick(r, list); const qty = isMdl ? 1 + Math.floor(r() * 8) : 1 + Math.floor(r() * 4);
           const unit = Math.round(p.price * (isMdl ? 0.85 : 0.55) * 100) / 100;
-          batch.push({ source: 'DEMO', external_ref: extRef, line_no: i + 1, sale_date: iso(date), sale_time: '09:00', customer_id: null, b2b_customer_id: b.id, site_id: site.id, product_id: p.id, product_code: p.code, quantity: qty, gross_amount: Math.round(p.price * qty * 100) / 100, discount: Math.round((p.price - unit) * qty * 100) / 100, net_amount: Math.round(unit * qty * 100) / 100, payment_kind: 'AZIENDA', booking_channel: 'AZIENDA', promo_code: null, campaign_id: null, promotion_id: null });
+          batch.push({ source: 'DEMO', external_ref: extRef, line_no: i + 1, sale_date: iso(date), sale_time: '09:00', customer_id: null, b2b_customer_id: b.id, site_id: site.id, product_id: p.id, product_code: p.code, quantity: qty, gross_amount: Math.round(p.price * qty * 100) / 100, discount: Math.round((p.price - unit) * qty * 100) / 100, net_amount: Math.round(unit * qty * 100) / 100, payment_kind: 'AZIENDA', booking_channel: 'AZIENDA', promo_code: null, campaign_id: null, promotion_id: null, operator: opsBySite[site.id][0] });
           n++;
         }
         if (batch.length >= 400) await flush();
@@ -337,6 +343,39 @@ export async function loadDemo() {
     }
   }
   void zones;
+  // Struttura: persone, orari, dotazioni
+  const ROLES_MED = ['Cardiologo', 'Ginecologo', 'Dermatologo', 'Ortopedico', 'Radiologo', 'Senologo', 'Urologo', 'Endocrinologo'];
+  for (const s of sites) {
+    const allSites = await many('SELECT manager FROM sites WHERE id=$1', [s.id]);
+    if (allSites[0]?.manager) await q("INSERT INTO site_staff(site_id, name, role, kind, weekly_hours, days, sort_order) VALUES ($1,$2,'Site manager','DIPENDENTE',40,'lun-ven',10)", [s.id, allSites[0].manager]);
+    opsBySite[s.id].forEach((op, i) => q("INSERT INTO site_staff(site_id, name, role, kind, weekly_hours, days, sort_order) VALUES ($1,$2,'Accettazione','DIPENDENTE',$3,$4,$5)", [s.id, op, i === 0 ? 40 : 30, i === 0 ? 'lun-sab' : 'lun-ven', 20 + i]));
+    if (s.kind !== 'HEADQUARTER') await q("INSERT INTO site_staff(site_id, name, role, kind, weekly_hours, days, sort_order) VALUES ($1,$2,'Infermiere','DIPENDENTE',36,'lun-sab',30)", [s.id, `${pick(r, FIRST_F)} ${pick(r, LAST)}`]);
+    if (s.kind === 'CENTRO_DIAGNOSTICO') { await q("INSERT INTO site_staff(site_id, name, role, kind, weekly_hours, days, sort_order) VALUES ($1,$2,'Tecnico di radiologia','DIPENDENTE',38,'lun-sab',40)", [s.id, `${pick(r, FIRST_M)} ${pick(r, LAST)}`]); await q("INSERT INTO site_staff(site_id, name, role, kind, specialty, weekly_hours, days, sort_order) VALUES ($1,$2,'Medico','LP','Radiologo',20,'mar/gio',50)", [s.id, `Dott. ${pick(r, FIRST_M)} ${pick(r, LAST)}`]); }
+    if (s.kind === 'POLIAMBULATORIO') for (let k = 0; k < 3; k++) await q("INSERT INTO site_staff(site_id, name, role, kind, specialty, weekly_hours, days, sort_order) VALUES ($1,$2,'Medico','LP',$3,$4,$5,$6)", [s.id, `Dott. ${pick(r, FIRST_M)} ${pick(r, LAST)}`, pick(r, ROLES_MED), 4 + Math.floor(r() * 12), pick(r, ['lun', 'mar', 'mer', 'gio', 'ven', 'lun/gio', 'mar/ven']), 50 + k]);
+    for (let wd = 1; wd <= 7; wd++) {
+      const closed = wd === 7 || (wd === 6 && s.kind === 'LABORATORIO');
+      await q('INSERT INTO site_hours(site_id, weekday, closed, open1, close1, open2, close2, note) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)', [s.id, wd, closed, closed ? null : '07:30', closed ? null : wd === 6 ? '12:30' : '13:00', closed || wd === 6 || s.kind === 'PUNTO_PRELIEVI' ? null : '14:30', closed || wd === 6 || s.kind === 'PUNTO_PRELIEVI' ? null : '19:00', closed ? null : 'prelievi 7:30-10:30']);
+    }
+    const assets = s.kind === 'CENTRO_DIAGNOSTICO' ? [['RM', 'Risonanza magnetica 1,5 T', 1], ['TC', 'TC 64 strati', 1], ['MAMMOGRAFO', 'Mammografo con tomosintesi', 1], ['ECOGRAFO', 'Ecografo', 2], ['RX', 'Radiologia digitale', 1], ['MOC', 'Densitometro DEXA', 1], ['BOX_PRELIEVO', 'Box prelievo', 2], ['AMBULATORIO', 'Ambulatorio', 3], ['MONITOR', 'Monitor sala attesa', 1]]
+      : s.kind === 'POLIAMBULATORIO' ? [['ECOGRAFO', 'Ecografo', 2], ['AMBULATORIO', 'Ambulatorio', 4 + Math.floor(r() * 4)], ['BOX_PRELIEVO', 'Box prelievo', 2], ['MONITOR', 'Monitor sala attesa', 1]]
+      : s.kind === 'PUNTO_PRELIEVI' ? [['BOX_PRELIEVO', 'Box prelievo', 1 + Math.floor(r() * 2)], ['AMBULATORIO', 'Ambulatorio', 1]]
+      : s.kind === 'LABORATORIO' ? [['ALTRO', 'Linea analitica chimica-immunometria', 1], ['ALTRO', 'Ematologia', 1], ['ALTRO', 'Microbiologia', 1], ['ALTRO', 'Biologia molecolare', 1]] : [];
+    for (const [k, nm, qty] of assets) await q('INSERT INTO site_assets(site_id, kind, name, quantity) VALUES ($1,$2,$3,$4)', [s.id, k, nm, qty]);
+    await q('UPDATE sites SET surface_sqm=$2, rooms=$3, boxes=$4, parking=$5, accessibility=$6, catchment_cities=$7, saturday_open=$8 WHERE id=$1', [s.id, s.kind === 'PUNTO_PRELIEVI' ? 60 + Math.floor(r() * 60) : 180 + Math.floor(r() * 400), assets.find((a) => a[0] === 'AMBULATORIO')?.[2] || 1, assets.find((a) => a[0] === 'BOX_PRELIEVO')?.[2] || 0, pick(r, ['Parcheggio privato 8 posti', 'Strisce blu in zona', 'Parcheggio pubblico a 100 m', 'Nessun parcheggio dedicato']), 'Accesso senza barriere, ascensore', (AREAS.find((a) => a[4].includes(s.code)) || AREAS[0])[0], s.kind !== 'LABORATORIO']);
+  }
+  // Giorni lavorati pianificati e budget dell'anno in corso (dal dato reale del mese, con un obiettivo di crescita)
+  const { plannedDays } = await import('./calendar.js');
+  const lineRows = await many('SELECT id FROM product_lines');
+  for (let m = 1; m <= 12; m++) {
+    await q('INSERT INTO working_days(year, month, site_id, planned) VALUES ($1,$2,NULL,$3) ON CONFLICT DO NOTHING', [year, m, plannedDays(year, m, { saturday: true })]);
+    for (const s of sites) await q('INSERT INTO working_days(year, month, site_id, planned) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING', [year, m, s.id, plannedDays(year, m, { saturday: s.kind !== 'LABORATORIO' })]);
+    const actualLine = await many(`SELECT p.line_id, sum(s.net_amount) AS v, count(DISTINCT s.external_ref)::int AS t FROM sales s JOIN products p ON p.id=s.product_id WHERE date_part('year', s.sale_date)=$1 AND date_part('month', s.sale_date)=$2 GROUP BY p.line_id`, [year, m]);
+    const refMonth = m >= today.getMonth() + 1 ? Math.max(1, today.getMonth()) : m; // mese corrente e futuri: dal mese pieno precedente
+    const refLine = refMonth === m ? actualLine : await many(`SELECT p.line_id, sum(s.net_amount) AS v, count(DISTINCT s.external_ref)::int AS t FROM sales s JOIN products p ON p.id=s.product_id WHERE date_part('year', s.sale_date)=$1 AND date_part('month', s.sale_date)=$2 GROUP BY p.line_id`, [year, refMonth]);
+    for (const l of lineRows) { const a = refLine.find((x) => x.line_id === l.id); const f = 0.92 + r() * 0.2; await q('INSERT INTO budgets(year, month, line_id, site_id, amount, tickets) VALUES ($1,$2,$3,NULL,$4,$5) ON CONFLICT DO NOTHING', [year, m, l.id, Math.round(Number(a?.v || 0) * f), Math.round(Number(a?.t || 0) * f)]); }
+    const refSite = await many(`SELECT s.site_id, sum(s.net_amount) AS v, count(DISTINCT s.external_ref)::int AS t FROM sales s WHERE date_part('year', s.sale_date)=$1 AND date_part('month', s.sale_date)=$2 GROUP BY s.site_id`, [year, refMonth]);
+    for (const s of sites) { const a = refSite.find((x) => x.site_id === s.id); const f = 0.92 + r() * 0.2; await q('INSERT INTO budgets(year, month, line_id, site_id, amount, tickets) VALUES ($1,$2,NULL,$3,$4,$5) ON CONFLICT DO NOTHING', [year, m, s.id, Math.round(Number(a?.v || 0) * f), Math.round(Number(a?.t || 0) * f)]); }
+  }
   return { customers: customers.length + b2b.length, products: Object.keys(prodIds).length, sales: n };
 }
 
@@ -348,6 +387,7 @@ export async function clearDemo() {
     await c.query("DELETE FROM campaigns");
     await c.query("DELETE FROM promotions");
     await c.query("DELETE FROM products WHERE source='DEMO'");
+    await c.query('DELETE FROM site_staff'); await c.query('DELETE FROM site_hours'); await c.query('DELETE FROM site_assets'); await c.query('DELETE FROM budgets'); await c.query('DELETE FROM working_days'); await c.query('DELETE FROM variance_notes');
   });
   await refreshCustomerStats();
 }

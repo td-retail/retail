@@ -85,7 +85,47 @@ r.get('/summary', ah(async (req, res) => {
   const last_import = await one('SELECT created_at, source, dataset, rows_ok FROM import_batches ORDER BY created_at DESC LIMIT 1');
   const data_range = await one('SELECT min(sale_date) AS min, max(sale_date) AS max FROM sales');
 
-  res.json({ period: { from, to, days, prevFrom, prevTo }, kpi: cur, prev, trend, by_line, by_site, by_channel, by_payment, by_sex, by_age, by_province, by_city, by_weekday, by_hour, by_source, by_b2b_type, top_products, bottom_products, top_b2b, top_customers, base, recalls, promo, campaigns, exposure, last_import, data_range, bands });
+  // Giorni lavorati nel periodo (pianificati dal calendario, reali dalle vendite) e produttività giornaliera
+  const wdq = ctx();
+  const wdPlanned = await one(`SELECT coalesce(sum(planned),0)::int AS n FROM working_days WHERE coalesce(site_id,0)=$1 AND make_date(year, month, 1) BETWEEN date_trunc('month', $2::date) AND $3::date`, [req.query.site_id ? Number(req.query.site_id) : 0, from, to]);
+  const wdActual = await one(`SELECT count(DISTINCT s.sale_date)::int AS n FROM sales s WHERE s.sale_date BETWEEN ${wdq.F} AND ${wdq.T} ${wdq.sc}`, wdq.p.values);
+  const working_days = { planned: wdPlanned.n, actual: wdActual.n, revenue_per_day: wdActual.n ? Number(cur.revenue) / wdActual.n : 0, tickets_per_day: wdActual.n ? cur.tickets / wdActual.n : 0 };
+  // Spesa media per profilo (scontrino medio e spesa per paziente nel periodo)
+  const profile = async (expr, join = '', order = 'spend_per_customer DESC') => { const { p, F, T, sc } = ctx(); return many(`SELECT ${expr} AS label, count(DISTINCT (s.source, s.external_ref))::int AS tickets, count(DISTINCT s.customer_id)::int AS customers, coalesce(sum(s.net_amount),0) AS revenue,
+      coalesce(sum(s.net_amount),0) / nullif(count(DISTINCT (s.source, s.external_ref)),0) AS avg_ticket, coalesce(sum(s.net_amount),0) / nullif(count(DISTINCT s.customer_id),0) AS spend_per_customer
+    FROM sales s JOIN customers c ON c.id=s.customer_id ${join} WHERE s.sale_date BETWEEN ${F} AND ${T} ${sc} GROUP BY 1 HAVING count(DISTINCT s.customer_id) >= 5 ORDER BY ${order} LIMIT 12`, p.values); };
+  const [spend_by_sex, spend_by_age, spend_by_province, spend_by_segment, spend_by_channel] = await Promise.all([
+    profile("coalesce(c.sex,'n.d.')"), profile(bandSql, '', 'label'), profile("coalesce(c.province,'n.d.')"),
+    profile(`CASE WHEN c.first_visit BETWEEN ${'$F'} AND ${'$T'} THEN 'NUOVO' WHEN c.visits >= 2 THEN 'RICORRENTE' ELSE 'OCCASIONALE' END`.replace('$F', "'" + from + "'").replace('$T', "'" + to + "'")),
+    profile("coalesce(s.booking_channel,'n.d.')"),
+  ]);
+  // Paziente tipo: i tre archetipi più numerosi per volume di richiesta (sesso, fascia di età, provincia) con cosa comprano
+  const ac = ctx();
+  const archRows = await many(`SELECT coalesce(c.sex,'n.d.') AS sex, ${bandSql} AS band, coalesce(c.province,'n.d.') AS province, count(DISTINCT (s.source, s.external_ref))::int AS tickets, count(DISTINCT c.id)::int AS customers, coalesce(sum(s.net_amount),0) AS revenue,
+      round(avg(date_part('year', age(s.sale_date, c.birth_date))))::int AS avg_age
+    FROM sales s JOIN customers c ON c.id=s.customer_id WHERE s.sale_date BETWEEN ${ac.F} AND ${ac.T} ${ac.sc} GROUP BY 1,2,3 ORDER BY tickets DESC LIMIT 3`, ac.p.values);
+  const archetypes = [];
+  for (const a of archRows) {
+    const pc = ctx();
+    const [products, cities, channels, lines] = await Promise.all([
+      many(`SELECT pr.description AS label, count(*)::int AS n FROM sales s JOIN customers c ON c.id=s.customer_id JOIN products pr ON pr.id=s.product_id WHERE s.sale_date BETWEEN ${pc.F} AND ${pc.T} ${pc.sc} AND coalesce(c.sex,'n.d.')=$${pc.p.values.length + 1} AND ${bandSql}=$${pc.p.values.length + 2} AND coalesce(c.province,'n.d.')=$${pc.p.values.length + 3} GROUP BY 1 ORDER BY n DESC LIMIT 6`, [...pc.p.values, a.sex, a.band, a.province]),
+      many(`SELECT coalesce(c.city,'n.d.') AS label, count(DISTINCT c.id)::int AS n FROM sales s JOIN customers c ON c.id=s.customer_id WHERE s.sale_date BETWEEN ${pc.F} AND ${pc.T} ${pc.sc} AND coalesce(c.sex,'n.d.')=$${pc.p.values.length + 1} AND ${bandSql}=$${pc.p.values.length + 2} AND coalesce(c.province,'n.d.')=$${pc.p.values.length + 3} GROUP BY 1 ORDER BY n DESC LIMIT 3`, [...pc.p.values, a.sex, a.band, a.province]),
+      many(`SELECT coalesce(s.booking_channel,'n.d.') AS label, count(*)::int AS n FROM sales s JOIN customers c ON c.id=s.customer_id WHERE s.sale_date BETWEEN ${pc.F} AND ${pc.T} ${pc.sc} AND coalesce(c.sex,'n.d.')=$${pc.p.values.length + 1} AND ${bandSql}=$${pc.p.values.length + 2} AND coalesce(c.province,'n.d.')=$${pc.p.values.length + 3} GROUP BY 1 ORDER BY n DESC LIMIT 2`, [...pc.p.values, a.sex, a.band, a.province]),
+      many(`SELECT pl.name AS label, coalesce(sum(s.net_amount),0) AS revenue FROM sales s JOIN customers c ON c.id=s.customer_id JOIN products pr ON pr.id=s.product_id JOIN product_lines pl ON pl.id=pr.line_id WHERE s.sale_date BETWEEN ${pc.F} AND ${pc.T} ${pc.sc} AND coalesce(c.sex,'n.d.')=$${pc.p.values.length + 1} AND ${bandSql}=$${pc.p.values.length + 2} AND coalesce(c.province,'n.d.')=$${pc.p.values.length + 3} GROUP BY 1 ORDER BY revenue DESC LIMIT 3`, [...pc.p.values, a.sex, a.band, a.province]),
+    ]);
+    archetypes.push({ ...a, share_tickets: cur.tickets ? Math.round((a.tickets / cur.tickets) * 1000) / 10 : 0, avg_ticket: a.tickets ? Number(a.revenue) / a.tickets : 0, spend_per_customer: a.customers ? Number(a.revenue) / a.customers : 0, products, cities, channels, lines });
+  }
+  // Classifica di chi vende di più: operatori di accettazione e sedi
+  const oc = ctx();
+  const top_operators = await many(`SELECT s.operator AS label, min(st.name) AS site_name, count(DISTINCT st.id)::int AS sites, coalesce(sum(s.net_amount),0) AS revenue, count(DISTINCT (s.source, s.external_ref))::int AS tickets, sum(s.quantity)::int AS items,
+      coalesce(sum(s.net_amount),0) / nullif(count(DISTINCT (s.source, s.external_ref)),0) AS avg_ticket, count(DISTINCT s.sale_date)::int AS days
+    FROM sales s LEFT JOIN sites st ON st.id=s.site_id WHERE s.operator IS NOT NULL AND s.sale_date BETWEEN ${oc.F} AND ${oc.T} ${oc.sc} GROUP BY s.operator ORDER BY revenue DESC LIMIT 15`, oc.p.values);
+  // Budget del periodo (per linea, network) e consuntivo
+  const budget = await one(`SELECT coalesce(sum(amount),0) AS amount FROM budgets WHERE line_id IS NOT NULL AND site_id IS NULL AND make_date(year, month, 1) BETWEEN date_trunc('month', $1::date) AND $2::date`, [from, to]);
+  const budgetSite = req.query.site_id ? await one(`SELECT coalesce(sum(amount),0) AS amount FROM budgets WHERE site_id=$3 AND line_id IS NULL AND make_date(year, month, 1) BETWEEN date_trunc('month', $1::date) AND $2::date`, [from, to, Number(req.query.site_id)]) : null;
+  const budget_period = { amount: Number((budgetSite || budget).amount), actual: Number(cur.revenue), scope: budgetSite ? 'sede' : 'network' };
+
+  res.json({ working_days, spend_by_sex, spend_by_age, spend_by_province, spend_by_segment, spend_by_channel, archetypes, top_operators, budget_period, period: { from, to, days, prevFrom, prevTo }, kpi: cur, prev, trend, by_line, by_site, by_channel, by_payment, by_sex, by_age, by_province, by_city, by_weekday, by_hour, by_source, by_b2b_type, top_products, bottom_products, top_b2b, top_customers, base, recalls, promo, campaigns, exposure, last_import, data_range, bands });
 }));
 
 // Richiami: clienti con esami periodici in scadenza (lista operativa per SMS/telefono)

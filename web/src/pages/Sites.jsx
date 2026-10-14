@@ -25,7 +25,7 @@ export default function Sites() {
   return (
     <div className="page">
       <div className="page-head">
-        <div><h1>Sedi del network</h1><div className="sub">Punti prelievo, centri diagnostici, poliambulatori e laboratorio: anagrafica, site manager, stato dell'esposizione e fatturato dell'anno.</div></div>
+        <div><h1>Sedi del network</h1><div className="sub">Punti prelievo, centri diagnostici, poliambulatori e laboratorio. Clicca una sede per la scheda struttura: profilo, persone, orari, dotazioni, bacino e chi vende di più.</div></div>
         {canWrite(user) && <button className="btn" onClick={() => setEdit({ kind: 'PUNTO_PRELIEVI', active: true, sort_order: 100 })}>+ Nuova sede</button>}
       </div>
       <div className="grid g4" style={{ marginBottom: 16 }}>
@@ -38,10 +38,10 @@ export default function Sites() {
       <Card flush>
         {!list.data ? <Loading /> : !rows.length ? <Empty>Nessuna sede</Empty> : (
           <div className="table-wrap"><table className="t"><thead><tr><th>Sede</th><th>Tipologia</th><th>Indirizzo</th><th>Site manager</th><th>Insegna precedente</th><th className="num">Fatturato YTD</th><th className="num">Esposizione</th><th /></tr></thead>
-            <tbody>{rows.map((s) => <tr key={s.id} className={!s.active ? 'muted' : ''}>
+            <tbody>{rows.map((s) => <tr key={s.id} className={`click ${!s.active ? 'muted' : ''}`} onClick={() => nav(`/sedi/${s.id}`)}>
               <td><div className="strong">{s.name}</div><div className="small muted">{s.code}{!s.active && <Badge tone="red">disattivata</Badge>}</div></td><td className="small">{SITE_KIND[s.kind]}</td><td className="small">{s.address}{s.city ? `, ${s.zip || ''} ${s.city} (${s.province})` : ''}</td><td className="small">{s.manager || <span className="muted">da definire</span>}</td><td className="small">{s.legacy_brand || '–'}</td>
-              <td className="num">{eur0(s.revenue_ytd)}</td><td className="num">{s.kind !== 'HEADQUARTER' && <button className="btn sm ghost" onClick={() => nav(`/esposizione/${s.id}`)}>{s.exposure_ok}/{s.exposure_items}</button>}</td>
-              <td className="num" style={{ whiteSpace: 'nowrap' }}>{canWrite(user) && <button className="btn sm ghost" onClick={() => setEdit({ ...s })}>Modifica</button>} {isAdmin(user) && <button className="btn sm danger" onClick={async () => { if (!window.confirm(`Eliminare o disattivare ${s.name}?`)) return; try { const r = await api.del(`/sites/${s.id}`); toast(r.deactivated ? 'Sede disattivata (ha vendite collegate)' : 'Sede eliminata'); list.reload(); } catch (e) { toast(e.message, 'err'); } }}>Elimina</button>}</td>
+              <td className="num">{eur0(s.revenue_ytd)}</td><td className="num">{s.kind !== 'HEADQUARTER' && <button className="btn sm ghost" onClick={(e) => { e.stopPropagation(); nav(`/esposizione/${s.id}`); }}>{s.exposure_ok}/{s.exposure_items}</button>}</td>
+              <td className="num" style={{ whiteSpace: 'nowrap' }}>{canWrite(user) && <button className="btn sm ghost" onClick={(e) => { e.stopPropagation(); setEdit({ ...s }); }}>Modifica</button>} {isAdmin(user) && <button className="btn sm danger" onClick={async (e) => { e.stopPropagation(); if (!window.confirm(`Eliminare o disattivare ${s.name}?`)) return; try { const r = await api.del(`/sites/${s.id}`); toast(r.deactivated ? 'Sede disattivata (ha vendite collegate)' : 'Sede eliminata'); list.reload(); } catch (e) { toast(e.message, 'err'); } }}>Elimina</button>}</td>
             </tr>)}</tbody></table></div>
         )}
       </Card>

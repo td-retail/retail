@@ -25,6 +25,7 @@ function filters(query) {
   if (query.source) w.push(`s.source=${p.add(query.source)}`);
   if (query.campaign_id) w.push(`s.campaign_id=${p.add(Number(query.campaign_id))}`);
   if (query.promotion_id) w.push(`s.promotion_id=${p.add(Number(query.promotion_id))}`);
+  if (query.operator) w.push(`s.operator=${p.add(query.operator)}`);
   if (query.batch_id) w.push(`s.import_batch_id=${p.add(Number(query.batch_id))}`);
   if (query.q) { const t = p.add(`%${query.q}%`); w.push(`(s.external_ref ILIKE ${t} OR c.last_name ILIKE ${t} OR c.company_name ILIKE ${t} OR b.company_name ILIKE ${t} OR p.description ILIKE ${t} OR s.product_desc ILIKE ${t})`); }
   return { where: w.join(' AND '), params: p.values };
@@ -43,7 +44,7 @@ r.get('/', ah(async (req, res) => {
 r.get('/export.xlsx', ah(async (req, res) => {
   const { where, params } = filters(req.query);
   const rows = await many(`${SELECT} ${FROM} WHERE ${where} ORDER BY s.sale_date DESC, s.external_ref, s.line_no LIMIT 50000`, params);
-  const buf = await toXlsx([{ name: 'Vendite', columns: [{ header: 'Data', key: 'sale_date', date: true }, { header: 'Ora', key: 'sale_time' }, { header: 'Accettazione', key: 'external_ref' }, { header: 'Riga', key: 'line_no', int: true }, { header: 'Sede', key: 'site_name', width: 30 }, { header: 'Cliente', key: 'customer', width: 28 }, { header: 'Azienda (B2B)', key: 'company_name', width: 28 }, { header: 'Codice', key: 'product_code' }, { header: 'Prestazione', key: 'product_description', width: 40 }, { header: 'Linea', key: 'line_name', width: 24 }, { header: 'Q.tà', key: 'quantity', int: true }, { header: 'Lordo', key: 'gross_amount', money: true }, { header: 'Sconto', key: 'discount', money: true }, { header: 'Netto', key: 'net_amount', money: true }, { header: 'Regime', key: 'payment_kind' }, { header: 'Canale', key: 'booking_channel' }, { header: 'Promo', key: 'promo_code' }, { header: 'Campagna', key: 'campaign_name', width: 28 }, { header: 'Origine', key: 'source' }],
+  const buf = await toXlsx([{ name: 'Vendite', columns: [{ header: 'Data', key: 'sale_date', date: true }, { header: 'Ora', key: 'sale_time' }, { header: 'Accettazione', key: 'external_ref' }, { header: 'Riga', key: 'line_no', int: true }, { header: 'Sede', key: 'site_name', width: 30 }, { header: 'Cliente', key: 'customer', width: 28 }, { header: 'Azienda (B2B)', key: 'company_name', width: 28 }, { header: 'Codice', key: 'product_code' }, { header: 'Prestazione', key: 'product_description', width: 40 }, { header: 'Linea', key: 'line_name', width: 24 }, { header: 'Q.tà', key: 'quantity', int: true }, { header: 'Lordo', key: 'gross_amount', money: true }, { header: 'Sconto', key: 'discount', money: true }, { header: 'Netto', key: 'net_amount', money: true }, { header: 'Regime', key: 'payment_kind' }, { header: 'Canale', key: 'booking_channel' }, { header: 'Promo', key: 'promo_code' }, { header: 'Campagna', key: 'campaign_name', width: 28 }, { header: 'Operatore', key: 'operator' }, { header: 'Origine', key: 'source' }],
     rows: rows.map((x) => ({ ...x, customer: x.last_name ? `${x.last_name} ${x.first_name || ''}` : '' })), totals: { net_amount: rows.reduce((a, x) => a + Number(x.net_amount), 0), gross_amount: rows.reduce((a, x) => a + Number(x.gross_amount), 0), discount: rows.reduce((a, x) => a + Number(x.discount), 0) } }]);
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', `attachment; filename="vendite_${req.query.from || 'inizio'}_${req.query.to || 'oggi'}.xlsx"`);
@@ -53,7 +54,7 @@ r.get('/export.xlsx', ah(async (req, res) => {
 // Inserimento manuale (accettazione con più righe)
 const manualSchema = z.object({
   sale_date: z.string(), sale_time: z.string().nullable().optional(), site_id: z.number().int(), customer_id: z.number().int().nullable().optional(), b2b_customer_id: z.number().int().nullable().optional(),
-  payment_kind: z.string().nullable().optional(), booking_channel: z.string().nullable().optional(), referrer: z.string().nullable().optional(), promo_code: z.string().nullable().optional(), external_ref: z.string().nullable().optional(),
+  payment_kind: z.string().nullable().optional(), booking_channel: z.string().nullable().optional(), referrer: z.string().nullable().optional(), promo_code: z.string().nullable().optional(), external_ref: z.string().nullable().optional(), operator: z.string().nullable().optional(),
   lines: z.array(z.object({ product_id: z.number().int(), quantity: z.number().int().min(1).default(1), gross_amount: z.number(), discount: z.number().default(0) })).min(1),
 });
 r.post('/', requireWrite, ah(async (req, res) => {
@@ -65,9 +66,9 @@ r.post('/', requireWrite, ah(async (req, res) => {
   const prom = promo ? await one('SELECT id FROM promotions WHERE upper(promo_code)=$1', [promo]) : null;
   for (const [i, l] of d.lines.entries()) {
     const pr = await one('SELECT code FROM products WHERE id=$1', [l.product_id]);
-    await q(`INSERT INTO sales(source, external_ref, line_no, sale_date, sale_time, customer_id, b2b_customer_id, site_id, product_id, product_code, quantity, gross_amount, discount, net_amount, payment_kind, booking_channel, referrer, promo_code, campaign_id, promotion_id)
-      VALUES ('MANUALE',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
-      [ref, i + 1, d.sale_date, d.sale_time || null, d.customer_id || null, d.b2b_customer_id || null, d.site_id, l.product_id, pr?.code || null, l.quantity, l.gross_amount, l.discount, Math.round((l.gross_amount - l.discount) * 100) / 100, d.payment_kind || (d.b2b_customer_id ? 'AZIENDA' : 'PRIVATO'), d.booking_channel || null, d.referrer || null, promo, camp?.id || null, prom?.id || null]);
+    await q(`INSERT INTO sales(source, external_ref, line_no, sale_date, sale_time, customer_id, b2b_customer_id, site_id, product_id, product_code, quantity, gross_amount, discount, net_amount, payment_kind, booking_channel, referrer, promo_code, campaign_id, promotion_id, operator)
+      VALUES ('MANUALE',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
+      [ref, i + 1, d.sale_date, d.sale_time || null, d.customer_id || null, d.b2b_customer_id || null, d.site_id, l.product_id, pr?.code || null, l.quantity, l.gross_amount, l.discount, Math.round((l.gross_amount - l.discount) * 100) / 100, d.payment_kind || (d.b2b_customer_id ? 'AZIENDA' : 'PRIVATO'), d.booking_channel || null, d.referrer || null, promo, camp?.id || null, prom?.id || null, d.operator || req.user.full_name]);
   }
   await refreshCustomerStats([d.customer_id, d.b2b_customer_id].filter(Boolean));
   await audit(req, 'SALE_CREATE', 'sale', ref, { lines: d.lines.length });
