@@ -1,0 +1,51 @@
+# Deploy su Render: New > Blueprint > collega il repository GitHub di td-retail.
+services:
+  - type: web
+    name: td-retail
+    runtime: docker
+    plan: starter
+    region: frankfurt
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "3000"
+      - key: BASE_URL
+        value: https://retail.toscanadiagnostica.it   # dominio ufficiale: gli altri host vengono reindirizzati qui
+      - key: DATABASE_URL
+        fromDatabase:
+          name: td-retail-db
+          property: connectionString
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: SESSION_HOURS
+        value: "10"
+      - key: REQUIRE_TOTP_FOR_ADMINS
+        value: "true"
+      - key: MAX_UPLOAD_MB
+        value: "40"
+      - key: DEMO_DATA
+        value: "false"   # true = carica il set dimostrativo al primo avvio (solo su database vuoto); si rimuove da Impostazioni
+      - key: SEED_ADMIN_EMAIL
+        value: francesco.epifani@toscanadiagnostica.it
+      - key: SEED_ADMIN_NAME
+        value: Francesco Epifani
+      - key: SEED_ADMIN_PASSWORD
+        sync: false   # inserire a mano nel pannello (min 12 caratteri): richiesta al primo accesso, poi da cambiare
+      - key: ENTRA_TENANT_ID
+        sync: false   # gestite nel pannello Render: il Sync del Blueprint non le sovrascrive
+      - key: ENTRA_CLIENT_ID
+        sync: false
+      - key: ENTRA_CLIENT_SECRET
+        sync: false
+      - key: ANTHROPIC_MODEL
+        value: claude-sonnet-5-5   # modello per le proposte di claim; aggiornare quando Anthropic ritira il modello
+      - key: ANTHROPIC_API_KEY
+        sync: false   # facoltativa: proposte di claim su misura per le promozioni
+databases:
+  - name: td-retail-db
+    plan: basic-256mb   # vendite e anagrafiche: pochi MB; passare a basic-1gb se si caricano molte foto
+    region: frankfurt
+    databaseName: retail
+    user: retail
