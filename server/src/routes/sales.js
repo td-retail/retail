@@ -89,20 +89,21 @@ r.get('/import/datasets', ah(async (_req, res) => res.json(Object.fromEntries(Ob
 // Anteprima: intestazioni, prime righe e mappatura proposta (automatica o salvata)
 r.post('/import/preview', requireWrite, upload.single('file'), ah(async (req, res) => {
   if (!req.file) throw bad('File mancante');
-  const { source, dataset } = parse(z.object({ source: z.enum(['GIPO', 'TUOTEMPO', 'STUDIOLAB', 'IMPORT']), dataset: z.enum(['SALES', 'CUSTOMERS', 'PRODUCTS']) }), req.body);
-  const { headers, rows } = await parseFile(req.file.buffer, req.file.originalname);
+  const { source, dataset } = parse(z.object({ source: z.enum(['GIPO', 'TUOTEMPO', 'STUDIOLAB', 'IMPORT']), dataset: z.enum(['SALES', 'CUSTOMERS', 'PRODUCTS', 'CATALOG_STUDIOLAB', 'COSTS']) }), req.body);
+  const def = DATASETS[dataset];
+  const { headers, rows, sheets } = await parseFile(req.file.buffer, req.file.originalname, { multiSheet: Boolean(def.multiSheet), keyHeader: def.multiSheet ? def.multiSheet : null });
   const saved = await savedMapping(source, dataset);
   const auto = autoMap(dataset, headers);
   const mapping = saved && Object.values(saved).every((h) => headers.includes(h)) ? saved : auto;
-  res.json({ headers, sample: rows.slice(0, 8), rows_total: rows.length, mapping, saved: Boolean(saved), fields: DATASETS[dataset].fields.map(([key, label, required]) => ({ key, label, required })) });
+  res.json({ headers, sample: rows.slice(0, 8), rows_total: rows.length, mapping, saved: Boolean(saved), sheets: sheets || null, fields: def.fields.map(([key, label, required]) => ({ key, label, required })) });
 }));
 
 // Esecuzione (dry_run=1 per la sola validazione)
 r.post('/import/run', requireWrite, upload.single('file'), ah(async (req, res) => {
   if (!req.file) throw bad('File mancante');
-  const { source, dataset, mapping, dry_run } = parse(z.object({ source: z.enum(['GIPO', 'TUOTEMPO', 'STUDIOLAB', 'IMPORT']), dataset: z.enum(['SALES', 'CUSTOMERS', 'PRODUCTS']), mapping: z.string().optional(), dry_run: z.string().optional() }), req.body);
+  const { source, dataset, mapping, dry_run } = parse(z.object({ source: z.enum(['GIPO', 'TUOTEMPO', 'STUDIOLAB', 'IMPORT']), dataset: z.enum(['SALES', 'CUSTOMERS', 'PRODUCTS', 'CATALOG_STUDIOLAB', 'COSTS']), mapping: z.string().optional(), dry_run: z.string().optional(), default_site_code: z.string().optional() }), req.body);
   const map = mapping ? JSON.parse(mapping) : null;
-  const out = await runImport({ source, dataset, buffer: req.file.buffer, filename: req.file.originalname, mapping: map, userId: req.user.id, dryRun: dry_run === '1' });
+  const out = await runImport({ source, dataset, buffer: req.file.buffer, filename: req.file.originalname, mapping: map, userId: req.user.id, dryRun: dry_run === '1', defaultSiteCode: req.body.default_site_code || null });
   if (dry_run !== '1') await audit(req, 'IMPORT_RUN', 'import', out.batch_id, { source, dataset, rows_ok: out.rows_ok, rows_skipped: out.rows_skipped });
   res.json(out);
 }));
@@ -125,7 +126,9 @@ r.get('/import/template.xlsx', ah(async (req, res) => {
   const def = DATASETS[dataset];
   const example = { SALES: { external_ref: 'A123456', line_no: 1, sale_date: '14/10/2026', sale_time: '08:30', customer_external_id: 'P000123', customer_tax_code: 'RSSMRA80A01D612X', customer_last_name: 'Rossi', customer_first_name: 'Maria', customer_sex: 'F', customer_birth_date: '01/01/1980', customer_city: 'Firenze', customer_province: 'FI', customer_zip: '50100', customer_email: 'maria.rossi@example.org', customer_phone: '3331234567', b2b_company: '', b2b_vat: '', site_code: 'FI-CEC', product_code: '0014', product_desc: 'Emocromocitometrico completo', quantity: 1, gross_amount: 7, discount: 0, net_amount: 7, payment_kind: 'PRIVATO', booking_channel: 'SPORTELLO', referrer: '', promo_code: '' },
     CUSTOMERS: { external_id: 'P000123', tax_code: 'RSSMRA80A01D612X', last_name: 'Rossi', first_name: 'Maria', sex: 'F', birth_date: '01/01/1980', email: 'maria.rossi@example.org', phone: '3331234567', address: 'Via Roma 1', zip: '50100', city: 'Firenze', province: 'FI', marketing_consent: 'SI', acquisition_channel: 'WEB', company_name: '', vat_number: '', sector: '', contact_name: '', employees: '' },
-    PRODUCTS: { code: 'ECO012', description: 'Ecografia pelvica transvaginale', specialty: 'Ecografia', line_code: 'IMG', price: 70, price_ssn: 48.5, cost: 14, duration_min: 20, nomenclature: '2D53', periodicity_months: 12 } }[dataset];
+    PRODUCTS: { code: 'ECO012', description: 'Ecografia pelvica transvaginale', specialty: 'Ecografia', line_code: 'IMG', price: 70, price_ssn: 48.5, cost: 14, duration_min: 20, nomenclature: '2D53', periodicity_months: 12 },
+    CATALOG_STUDIOLAB: { code: '0014', description: 'Emocromocitometrico completo', description_short: 'Emocromo', sector: 'ANALISI', sector_clinical: 'EMATOLOGIA E COAGULAZIONE', destination: 'Ematologia', nomenclature: '90.62.2', price_ssn: 0, price: 7, price_mdl: 4.15, price_service: 3.8, cost_service: 0.467, is_vet: 'False', days: 1, non_usato: 'False' },
+    COSTS: { code: '0014', cost: 0.467, cost_unit: 0.467, cost_service: 0, description: 'Emocromocitometrico completo', sector_clinical: 'EMATOLOGIA E COAGULAZIONE', destination: 'Ematologia', in_use: 'Sì', price_b2b: '', price_b2c: '' } }[dataset];
   const buf = await toXlsx([{ name: def.label, columns: def.fields.map(([key, label, required]) => ({ header: `${label}${required ? ' *' : ''}`, key, width: Math.max(14, label.length + 2) })), rows: [example] },
     { name: 'Istruzioni', columns: [{ header: 'Istruzioni', key: 'a', width: 120 }], rows: ['Le colonne con asterisco sono obbligatorie. Le altre, se presenti, arricchiscono le anagrafiche.', 'Date in formato gg/mm/aaaa o aaaa-mm-gg. Importi con virgola o punto decimale.', 'La sede si riconosce dal codice (es. FI-CEC) o dal nome della sede configurata in Retail.', 'Per le vendite B2B (StudioLab) compila Azienda/struttura committente e lascia vuoti i dati del paziente.', 'Il numero di accettazione identifica la riga: ricaricando lo stesso file le righe vengono aggiornate, non duplicate.', 'I nomi delle colonne possono essere diversi: alla prima importazione si mappano le colonne e la mappatura resta salvata per la sorgente.'].map((a) => ({ a })) }]);
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');

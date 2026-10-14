@@ -28,7 +28,8 @@ export default function Dashboard() {
   if (s.error) return <div className="page"><ErrorBox error={s.error} /></div>;
   const k = d?.kpi; const pr = d?.prev;
   const avgTicket = k && k.tickets ? k.revenue / k.tickets : 0; const avgTicketPrev = pr && pr.tickets ? pr.revenue / pr.tickets : 0;
-  const trend = (d?.trend || []).map((t) => ({ ...t, month: monthLabel(t.month), b2c: Number(t.b2c), b2b: Number(t.b2b) }));
+  const margin = k ? Number(k.revenue) - Number(k.cost) : 0; const marginPrev = pr ? Number(pr.revenue) - Number(pr.cost) : 0;
+  const trend = (d?.trend || []).map((t) => ({ ...t, month: monthLabel(t.month), b2c: Number(t.b2c), b2b: Number(t.b2b), margin: Number(t.margin), invoiced: Number(t.invoiced) }));
   const promo = d?.promo;
   const target = promo?.kpi_target || {};
   return (
@@ -51,6 +52,12 @@ export default function Dashboard() {
           <KpiD label="Sconti e abbattimenti" value={k.discount} prev={pr.discount} invert foot={k.gross ? `${pct((k.discount / k.gross) * 100, 1)} del lordo` : ''} />
         </div>
         <div className="grid g4" style={{ marginTop: 16 }}>
+          <KpiD label="Margine sul costo diretto" value={margin} prev={marginPrev} foot={k.revenue_costed > 0 ? `${pct((margin / Number(k.revenue_costed)) * 100, 1)} · costi ${eur0(k.cost)}${Number(k.revenue) - Number(k.revenue_costed) > 1 ? ` · ${pct(((Number(k.revenue) - Number(k.revenue_costed)) / Number(k.revenue)) * 100, 0)} del fatturato senza costo` : ''}` : 'carica la distinta base per calcolarlo'} />
+          <Kpi label="Fatturato e da fatturare" value={eur0(k.invoiced)} foot={<span>{eur0(k.uninvoiced)} accettato non ancora fatturato ({pct(k.revenue ? (Number(k.uninvoiced) / Number(k.revenue)) * 100 : 0, 0)}) · {num(k.invoices)} fatture</span>} bar={k.revenue ? (Number(k.invoiced) / Number(k.revenue)) * 100 : null} />
+          <Kpi label="Pazienti finali B2B" value={num(k.patients)} foot={d.b2b_patients.total ? `${pct((d.b2b_patients.with_sex / d.b2b_patients.total) * 100, 0)} con sesso ed età noti${d.b2b_patients.avg_age ? ` · età media ${d.b2b_patients.avg_age}` : ''}` : 'nessuna vendita B2B nel periodo'} />
+          <Kpi label="Prestazioni senza costo" value={num(k.items_uncosted)} foot={k.items ? `${pct((k.items_uncosted / k.items) * 100, 0)} degli esami: codici non in distinta base` : ''} />
+        </div>
+        <div className="grid g4" style={{ marginTop: 16 }}>
           <div onClick={() => nav('/budget?tab=days')} style={{ cursor: 'pointer' }}><Kpi label="Giorni lavorati" value={`${num(d.working_days.actual)}${d.working_days.planned ? ` / ${num(d.working_days.planned)}` : ''}`} foot={d.working_days.planned ? `reali su pianificati · ${d.working_days.planned - d.working_days.actual > 0 ? `${d.working_days.planned - d.working_days.actual} in meno` : 'in linea'}` : 'reali nel periodo (nessun calendario impostato)'} bar={d.working_days.planned ? (d.working_days.actual / d.working_days.planned) * 100 : null} /></div>
           <Kpi label="Fatturato per giorno lavorato" value={eur0(d.working_days.revenue_per_day)} foot={`${num(d.working_days.tickets_per_day)} accettazioni al giorno`} />
           <div onClick={() => nav('/budget')} style={{ cursor: 'pointer' }}><Kpi label={`Budget del periodo (${d.budget_period.scope})`} value={d.budget_period.amount ? eur0(d.budget_period.amount) : '–'} foot={d.budget_period.amount ? <span>consuntivo {eur0(d.budget_period.actual)} · <Delta value={((d.budget_period.actual - d.budget_period.amount) / d.budget_period.amount) * 100} /></span> : 'nessun budget caricato'} bar={d.budget_period.amount ? (d.budget_period.actual / d.budget_period.amount) * 100 : null} /></div>
@@ -64,8 +71,8 @@ export default function Dashboard() {
         </div>
 
         <div className="grid" style={{ marginTop: 16, gridTemplateColumns: '2fr 1fr' }}>
-          <Card title="Andamento mensile" actions={<span className="small muted">fatturato B2C e B2B · nuovi pazienti</span>}>
-            <Trend data={trend} keys={[{ key: 'b2c', label: 'B2C', color: C.teal }, { key: 'b2b', label: 'B2B', color: C.mauve }]} lines={[{ key: 'new_customers', label: 'Nuovi pazienti', color: C.purple, dash: true }]} />
+          <Card title="Andamento mensile" actions={<span className="small muted">fatturato B2C e B2B · margine sul costo diretto</span>}>
+            <Trend data={trend} keys={[{ key: 'b2c', label: 'B2C', color: C.teal }, { key: 'b2b', label: 'B2B', color: C.mauve }]} lines={[{ key: 'margin', label: 'Margine', color: C.gold, money: true }]} />
           </Card>
           <Card title="Promozione del mese" actions={promo && <Link className="btn sm ghost" to={`/promozioni/${promo.id}`}>Apri</Link>}>
             {promo ? <>
@@ -95,6 +102,26 @@ export default function Dashboard() {
             <HBars data={d.by_payment.map((x) => ({ label: PAYMENT[x.label] || x.label, value: Number(x.revenue) }))} money keys={[{ key: 'value', label: 'Fatturato', color: C.mauve }]} labelWidth={150} height={Math.max(100, d.by_payment.length * 26 + 20)} />
           </Card>
         </div>
+
+        {(d.by_sector.length > 1 || d.b2b_patients.total > 0) && <div className="grid g3" style={{ marginTop: 16 }}>
+          <Card title="Fatturato e margine per settore" actions={<span className="small muted">settori StudioLab · clicca per le prestazioni</span>}>
+            <HBars data={d.by_sector.map((x) => ({ label: x.label, value: Number(x.revenue), margin: Number(x.margin) }))} money keys={[{ key: 'value', label: 'Fatturato', color: C.teal }, { key: 'margin', label: 'Margine', color: C.gold }]} labelWidth={170} height={Math.max(160, d.by_sector.length * 26 + 20)} onClick={(row) => nav(`/prodotti?sector=${encodeURIComponent(row.label)}`)} />
+          </Card>
+          <Card title="Dove si produce" actions={<span className="small muted">strumento interno o service esterno · fatturato</span>}>
+            <HBars data={d.by_destination.slice(0, 12).map((x) => ({ label: x.label, value: Number(x.revenue), margin: Number(x.margin) }))} money keys={[{ key: 'value', label: 'Fatturato', color: C.blue }, { key: 'margin', label: 'Margine', color: C.gold }]} labelWidth={170} height={Math.max(160, Math.min(12, d.by_destination.length) * 26 + 20)} />
+            <div className="small muted" style={{ marginTop: 6 }}>Service esterno: {eur0(d.by_destination.filter((x) => /service/i.test(x.label)).reduce((a, x) => a + Number(x.revenue), 0))} di fatturato, margine {eur0(d.by_destination.filter((x) => /service/i.test(x.label)).reduce((a, x) => a + Number(x.margin), 0))}.</div>
+          </Card>
+          <Card title="Pazienti finali dei clienti B2B" actions={<span className="small muted">dal codice fiscale · pazienti distinti</span>}>
+            {d.b2b_patients.total ? <>
+              <div className="subhead" style={{ marginTop: 0 }}>Per sesso</div>
+              <Donut size={140} data={d.b2b_patients.by_sex.map((x) => ({ name: SEX[x.label] || 'n.d.', value: Number(x.patients), color: x.label === 'F' ? C.teal : x.label === 'M' ? C.blue : C.grey }))} />
+              <Legend items={d.b2b_patients.by_sex.map((x) => ({ label: `${SEX[x.label] || 'n.d.'} ${num(x.patients)} · ${eur0(x.spend_per_patient)} a paziente`, color: x.label === 'F' ? C.teal : x.label === 'M' ? C.blue : C.grey }))} />
+              <div className="subhead">Per fascia di età</div>
+              <VBars data={d.b2b_patients.by_age.map((x) => ({ label: x.label, value: Number(x.patients) }))} keys={[{ key: 'value', label: 'Pazienti', color: C.mauve }]} height={150} />
+              <div className="small muted">{num(d.b2b_patients.with_birth)} su {num(d.b2b_patients.total)} pazienti con data di nascita{d.b2b_patients.avg_age ? ` · età media ${d.b2b_patients.avg_age} anni` : ''}.</div>
+            </> : <Empty>Nessuna vendita B2B nel periodo</Empty>}
+          </Card>
+        </div>}
 
         <div className="grid g3" style={{ marginTop: 16 }}>
           <Card title="Chi sono i pazienti" actions={<Link className="btn sm ghost" to="/clienti">Profilazione</Link>}>
@@ -158,6 +185,14 @@ export default function Dashboard() {
             <ProductTable rows={d.bottom_products} nav={nav} />
           </Card>
         </div>
+        {k.revenue_costed > 0 && <div className="grid g2" style={{ marginTop: 16 }}>
+          <Card title="Prestazioni che rendono di più" flush actions={<span className="small muted">margine sul costo diretto nel periodo</span>}>
+            <ProductTable rows={d.top_margin_products} nav={nav} margin />
+          </Card>
+          <Card title="Prestazioni che rendono di meno" flush actions={<span className="small muted">margine negativo o nullo: prezzo da rivedere o costo da verificare</span>}>
+            <ProductTable rows={d.low_margin_products} nav={nav} margin />
+          </Card>
+        </div>}
 
         <div className="grid g3" style={{ marginTop: 16 }}>
           <Card title="Campagne in corso" flush actions={<Link className="btn sm ghost" to="/campagne">Tutte</Link>}>
@@ -169,7 +204,7 @@ export default function Dashboard() {
             <p className="small muted" style={{ marginTop: 10 }}>{d.exposure.issues} material{d.exposure.issues === 1 ? 'e' : 'i'} da sostituire o non conform{d.exposure.issues === 1 ? 'e' : 'i'} · {d.exposure.sites_with_issues} sed{d.exposure.sites_with_issues === 1 ? 'e' : 'i'} con interventi aperti.</p>
           </Card>
           <Card title="Top clienti B2B" flush actions={<Link className="btn sm ghost" to="/clienti/b2b">Elenco B2B</Link>}>
-            {d.top_b2b.length ? <table className="t"><thead><tr><th>Azienda</th><th className="num">Prestazioni</th><th className="num">Fatturato</th></tr></thead><tbody>{d.top_b2b.slice(0, 8).map((c) => <tr key={c.id} className="click" onClick={() => nav(`/clienti/${c.id}`)}><td className="strong">{c.label}</td><td className="num">{num(c.items)}</td><td className="num">{eur0(c.revenue)}</td></tr>)}</tbody></table> : <Empty>Nessuna vendita B2B nel periodo</Empty>}
+            {d.top_b2b.length ? <table className="t"><thead><tr><th>Azienda</th><th className="num">Fatturato</th><th className="num">Margine</th><th className="num">Da fatturare</th></tr></thead><tbody>{d.top_b2b.slice(0, 10).map((c) => <tr key={c.id} className="click" onClick={() => nav(`/clienti/${c.id}`)}><td className="strong">{c.label}<div className="small muted">{num(c.patients)} pazienti · {num(c.items)} esami{c.accounts > 1 ? ` · ${c.accounts} reparti` : ''}</div></td><td className="num">{eur0(c.revenue)}</td><td className="num">{Number(c.cost) > 0 ? <span className={Number(c.margin) < 0 ? 'red' : ''}>{eur0(c.margin)}<div className="small muted">{Number(c.revenue) > 0 ? pct((Number(c.margin) / Number(c.revenue)) * 100, 0) : ''}</div></span> : <span className="small muted">–</span>}</td><td className="num small">{eur0(c.uninvoiced)}</td></tr>)}</tbody></table> : <Empty>Nessuna vendita B2B nel periodo</Empty>}
           </Card>
         </div>
       </>}
@@ -180,10 +215,10 @@ export default function Dashboard() {
 const LINE_COLORS = [C.teal, C.blue, C.mauve, C.green, C.gold, C.grey];
 const eurShortPct = (v, tot) => (tot ? `${Math.round((Number(v) / Number(tot)) * 100)}%` : '');
 
-function ProductTable({ rows, nav }) {
+function ProductTable({ rows, nav, margin }) {
   if (!rows.length) return <Empty>Nessuna vendita nel periodo</Empty>;
   return (
-    <div className="table-wrap"><table className="t"><thead><tr><th>Prestazione</th><th className="num">Q.tà</th><th className="num">Fatturato</th><th className="num">Δ</th></tr></thead>
-      <tbody>{rows.map((x) => <tr key={x.id} className="click" onClick={() => nav(`/prodotti?open=${x.id}`)}><td><div className="strong">{x.label}</div><div className="small muted">{x.code} · {x.line_name}</div></td><td className="num">{num(x.items)}</td><td className="num strong">{eur0(x.revenue)}</td><td className="num"><Delta value={delta(x.revenue, x.revenue_prev)} /></td></tr>)}</tbody></table></div>
+    <div className="table-wrap"><table className="t"><thead><tr><th>Prestazione</th><th className="num">Q.tà</th><th className="num">Fatturato</th><th className="num">{margin ? 'Margine' : 'Δ'}</th></tr></thead>
+      <tbody>{rows.map((x) => <tr key={x.id} className="click" onClick={() => nav(`/prodotti?open=${x.id}`)}><td><div className="strong">{x.label}</div><div className="small muted">{x.code} · {x.sector || x.line_name}</div></td><td className="num">{num(x.items)}</td><td className="num strong">{eur0(x.revenue)}</td><td className="num">{margin ? (x.unit_cost != null ? <span className={Number(x.margin) < 0 ? 'red' : ''}>{eur0(x.margin)}<span className="small muted"> {Number(x.revenue) > 0 ? pct((Number(x.margin) / Number(x.revenue)) * 100, 0) : ''}</span></span> : <span className="small muted">senza costo</span>) : <Delta value={delta(x.revenue, x.revenue_prev)} />}</td></tr>)}</tbody></table></div>
   );
 }

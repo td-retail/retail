@@ -70,11 +70,11 @@ export function Trend({ data, height = 260, keys, lines = [], xKey = 'month', mo
         <CartesianGrid vertical={false} stroke="#e7eef0" />
         <XAxis dataKey={xKey} tick={tick} axisLine={false} tickLine={false} />
         <YAxis yAxisId="v" tickFormatter={money ? eurShort : num} tick={tick} axisLine={false} tickLine={false} width={64} />
-        {lines.length > 0 && <YAxis yAxisId="n" orientation="right" tick={tick} axisLine={false} tickLine={false} width={40} allowDecimals={false} />}
-        <Tooltip content={<Tip fmt={(v, k) => (keys.some((x) => x.key === k) && money ? eur(v) : num(v))} />} />
+        {lines.some((l) => !l.money) && <YAxis yAxisId="n" orientation="right" tick={tick} axisLine={false} tickLine={false} width={40} allowDecimals={false} />}
+        <Tooltip content={<Tip fmt={(v, k) => ((keys.some((x) => x.key === k) && money) || lines.some((x) => x.key === k && x.money) ? eur(v) : num(v))} />} />
         <RLegend wrapperStyle={{ fontSize: 12 }} />
         {keys.map((k, i) => <Area key={k.key} isAnimationActive={false} yAxisId="v" type="monotone" dataKey={k.key} name={k.label} stackId="a" stroke={k.color || PALETTE[i]} fill={k.color || PALETTE[i]} fillOpacity={0.75} strokeWidth={1.5} />)}
-        {lines.map((k, i) => <Line key={k.key} isAnimationActive={false} yAxisId="n" type="monotone" dataKey={k.key} name={k.label} stroke={k.color || C.purple} strokeWidth={2} dot={false} strokeDasharray={k.dash ? '4 3' : undefined} />)}
+        {lines.map((k, i) => <Line key={k.key} isAnimationActive={false} yAxisId={k.money ? 'v' : 'n'} type="monotone" dataKey={k.key} name={k.label} stroke={k.color || C.purple} strokeWidth={2} dot={false} strokeDasharray={k.dash ? '4 3' : undefined} />)}
       </AreaChart>
     </ResponsiveContainer>
   );

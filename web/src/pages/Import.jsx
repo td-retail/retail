@@ -4,7 +4,7 @@ import { api } from '../api.js';
 import { num, itDateTime, SOURCE } from '../format.js';
 
 const SOURCES = [['GIPO', 'GIPO (Docplanner) · accettazioni e pazienti B2C'], ['TUOTEMPO', 'TuoTempo · prenotazioni online'], ['STUDIOLAB', 'StudioLab (CB Sistemi) · accettazioni B2B'], ['IMPORT', 'Altro file (format Retail)']];
-const DATASETS = [['SALES', 'Vendite / accettazioni'], ['CUSTOMERS', 'Anagrafiche clienti'], ['PRODUCTS', 'Catalogo prestazioni (listino)']];
+const DATASETS = [['SALES', 'Vendite / accettazioni'], ['CUSTOMERS', 'Anagrafiche clienti'], ['PRODUCTS', 'Catalogo prestazioni (listino)'], ['CATALOG_STUDIOLAB', 'Tabella esami StudioLab (catalogo, settori, listini)'], ['COSTS', 'Distinta base (costi per esame, tutti i fogli)']];
 
 export default function Import() {
   const toast = useToast();
@@ -16,6 +16,8 @@ export default function Import() {
   const [mapping, setMapping] = useState({});
   const [result, setResult] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [defaultSite, setDefaultSite] = useState('');
+  const sitesList = useApi('/sites');
   const [undo, setUndo] = useState(null);
   const batches = useApi('/sales/import/batches');
   const reset = () => { setFile(null); setPreview(null); setMapping({}); setResult(null); if (input.current) input.current.value = ''; };
@@ -27,7 +29,7 @@ export default function Import() {
   };
   const run = async (dry) => {
     setBusy(true); setResult(null);
-    try { const fd = new FormData(); fd.append('file', file); fd.append('source', source); fd.append('dataset', dataset); fd.append('mapping', JSON.stringify(mapping)); if (dry) fd.append('dry_run', '1'); const r = await api.upload('/sales/import/run', fd); setResult(r); if (!dry) { toast(`Import completato: ${r.rows_ok} righe`); batches.reload(); } }
+    try { const fd = new FormData(); fd.append('file', file); fd.append('source', source); fd.append('dataset', dataset); fd.append('mapping', JSON.stringify(mapping)); if (defaultSite) fd.append('default_site_code', defaultSite); if (dry) fd.append('dry_run', '1'); const r = await api.upload('/sales/import/run', fd); setResult(r); if (!dry) { toast(`Import completato: ${r.rows_ok} righe`); batches.reload(); } }
     catch (e) { setResult({ error: e.message, errors: e.errors || e.details || [] }); }
     finally { setBusy(false); }
   };
@@ -52,12 +54,13 @@ export default function Import() {
             <Field label="File Excel (.xlsx) o CSV" className="span2"><input ref={input} type="file" accept=".xlsx,.csv,.txt" onChange={(e) => onFile(e.target.files?.[0])} /></Field>
           </div>
           {busy && !preview && <Loading text="Lettura del file…" />}
-          {preview && <div className="alert info" style={{ marginTop: 12, display: 'block' }}>{num(preview.rows_total)} righe, {preview.headers.length} colonne. {preview.saved ? 'Mappatura recuperata dall\'ultimo import di questa sorgente.' : 'Mappatura proposta automaticamente dai nomi delle colonne: controllala prima di procedere.'}</div>}
+          {preview && <div className="alert info" style={{ marginTop: 12, display: 'block' }}>{num(preview.rows_total)} righe, {preview.headers.length} colonne{preview.sheets ? ` da ${preview.sheets.length} fogli (${preview.sheets.map((x) => `${x.name}: ${num(x.rows)}`).join(', ')})` : ''}. {preview.saved ? 'Mappatura recuperata dall\'ultimo import di questa sorgente.' : 'Mappatura proposta automaticamente dai nomi delle colonne: controllala prima di procedere.'}</div>}
         </Card>
         <Card title="Come funziona">
           <p className="small"><b>GIPO</b>: esporta da Statistiche o Fatturazione l'elenco delle accettazioni con righe di prestazione (numero accettazione, data, paziente, codice e descrizione prestazione, importi, regime). Per le anagrafiche usa l'export pazienti.</p>
           <p className="small"><b>TuoTempo</b>: esporta le prenotazioni dal pannello (data, ora, paziente, sede/area, attività, canale). Le prenotazioni senza importo prendono il prezzo di listino del catalogo.</p>
-          <p className="small"><b>StudioLab</b>: esporta le accettazioni B2B con l'azienda o la struttura committente: ogni riga diventa una vendita B2B collegata al cliente aziendale (creato se manca).</p>
+          <p className="small"><b>StudioLab</b>: esporta "Dettaglio accettazioni per cliente" (Service e MDL): ogni riga diventa una vendita B2B collegata al cliente (codice SER/MDL, creato se manca). I pazienti finali non diventano clienti B2C: restano un riferimento per contare i pazienti distinti. I clienti con codice TD o CONV sono marcati interni ed esclusi dal fatturato; i reparti di una stessa struttura ("Nome - Reparto") vengono raggruppati. Scegli il laboratorio come sede predefinita.</p>
+          <p className="small"><b>Tabella esami</b> (export della tabella esami di StudioLab): crea o aggiorna il catalogo di laboratorio con settore, settore clinico, destinazione (strumento o service), listini privati, MDL e service. <b>Distinta base</b>: carica il costo totale per esame da tutti i fogli che hanno la colonna CodEsame (TD, Gentras...); il margine in dashboard, per cliente e per prestazione, si calcola da questi costi, per il B2C e per il B2B.</p>
           <p className="small"><b>Sedi</b>: la colonna sede viene riconosciuta dal codice (es. FI-CEC) o dal nome configurato in Sedi del network. <b>Prestazioni</b> non in catalogo vengono create con il codice del file; completa linea e prezzi dalla pagina Prestazioni.</p>
         </Card>
       </div>
@@ -72,6 +75,7 @@ export default function Import() {
               </Field>
             ))}
           </div>
+          {dataset === 'SALES' && <div className="form-grid" style={{ marginTop: 12 }}><Field label="Sede predefinita per le righe senza sede" help="es. il laboratorio per gli export StudioLab, che non riportano la sede"><select value={defaultSite} onChange={(e) => setDefaultSite(e.target.value)}><option value="">– nessuna –</option>{(sitesList.data || []).map((s) => <option key={s.id} value={s.code}>{s.name}</option>)}</select></Field></div>}
           {missingRequired.length > 0 && <div className="alert warn" style={{ marginTop: 12 }}>Campi obbligatori non mappati: {missingRequired.map((f) => f.label).join(', ')}.</div>}
           <div className="subhead">Anteprima (prime righe del file)</div>
           <div className="table-wrap" style={{ maxHeight: 220 }}><table className="t"><thead><tr>{preview.headers.map((h) => <th key={h}>{h}</th>)}</tr></thead><tbody>{preview.sample.map((r, i) => <tr key={i}>{preview.headers.map((h) => <td key={h} className="small">{r[h] instanceof Object ? JSON.stringify(r[h]) : String(r[h] ?? '')}</td>)}</tr>)}</tbody></table></div>
